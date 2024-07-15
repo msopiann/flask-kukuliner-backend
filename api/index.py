@@ -4,6 +4,10 @@ import pandas as pd
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
+
+import math
+import time
+
 from dotenv import load_dotenv
 import requests
 
@@ -78,9 +82,23 @@ def get_food_recommendations(
         for idx, row in restaurants_data.iterrows():
             restaurant_lat = row["lat"]
             restaurant_lon = row["lon"]
+
+            start_time = time.time()
             distance = get_distance_with_distancematrix_ai(
                 latitude, longitude, restaurant_lat, restaurant_lon
             )
+
+            # Check if the request took too long or failed
+            if (
+                distance is None or (time.time() - start_time) > 5
+            ):  # Adjust time limit as needed
+                distance = haversine(
+                    latitude, longitude, restaurant_lat, restaurant_lon
+                )
+                method = "Haversine"
+            else:
+                method = "Distance Matrix"
+
             if distance is not None and distance <= max_distance:
                 restaurant_info = {
                     "id": int(row["id"]),
@@ -90,7 +108,7 @@ def get_food_recommendations(
                     "estimatePrice": row["estimatePrice"],
                     "lat": restaurant_lat,
                     "lon": restaurant_lon,
-                    "distance": distance,
+                    "distance": f"{distance} | {method}",
                 }
                 recommended_restaurants.append(restaurant_info)
 
@@ -247,6 +265,43 @@ def recommend_food():
 
     recommended_food = get_food_recommendations(latitude, longitude, restaurants_data)
     return jsonify({"listKuliner": recommended_food})
+
+
+# BONUS HAVERSINE FORMULA
+# Define Earth radius (in kilometers)
+EARTH_RADIUS = 6371
+
+
+def haversine(lat1, lon1, lat2, lon2):
+    """
+    Calculates the distance between two points on a sphere using the Haversine formula.
+
+    Args:
+        lat1: Latitude of the first point in degrees.
+        lon1: Longitude of the first point in degrees.
+        lat2: Latitude of the second point in degrees.
+        lon2: Longitude of the second point in degrees.
+
+    Returns:
+        The distance between the two points in kilometers.
+    """
+    # Convert latitudes and longitudes to radians
+    lat1_rad = math.radians(lat1)
+    lon1_rad = math.radians(lon1)
+    lat2_rad = math.radians(lat2)
+    lon2_rad = math.radians(lon2)
+
+    dlon = lon2_rad - lon1_rad
+    dlat = lat2_rad - lat1_rad
+
+    a = math.sin(dlat / 2) * math.sin(dlat / 2) + math.cos(lat1_rad) * math.cos(
+        lat2_rad
+    ) * math.sin(dlon / 2) * math.sin(dlon / 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    distance = EARTH_RADIUS * c
+
+    return distance
 
 
 if __name__ == "__main__":
