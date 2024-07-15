@@ -1,14 +1,18 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import pandas as pd
+import logging
+import math
 import os
+import pandas as pd
+import requests
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
-import math
-
 from dotenv import load_dotenv
-import requests
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -53,7 +57,43 @@ def get_data_from_db():
         return None
 
 
+# Define Earth radius (in kilometers)
+EARTH_RADIUS = 6371
+
+
 # Services
+def haversine(lat1, lon1, lat2, lon2):
+    """
+    Calculates the distance between two points on a sphere using the Haversine formula.
+
+    Args:
+        lat1: Latitude of the first point in degrees.
+        lon1: Longitude of the first point in degrees.
+        lat2: Latitude of the second point in degrees.
+        lon2: Longitude of the second point in degrees.
+
+    Returns:
+        The distance between the two points in kilometers.
+    """
+    # Convert latitudes and longitudes to radians
+    lat1_rad = math.radians(lat1)
+    lon1_rad = math.radians(lon1)
+    lat2_rad = math.radians(lat2)
+    lon2_rad = math.radians(lon2)
+
+    dlon = lon2_rad - lon1_rad
+    dlat = lat2_rad - lat1_rad
+
+    a = math.sin(dlat / 2) * math.sin(dlat / 2) + math.cos(lat1_rad) * math.cos(
+        lat2_rad
+    ) * math.sin(dlon / 2) * math.sin(dlon / 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    distance = EARTH_RADIUS * c
+
+    return distance
+
+
 def get_distance_with_distancematrix_ai(latitude1, longitude1, latitude2, longitude2):
     """Menggunakan DistanceMatrix.AI untuk menghitung jarak antara dua titik."""
     try:
@@ -61,13 +101,32 @@ def get_distance_with_distancematrix_ai(latitude1, longitude1, latitude2, longit
         response = requests.get(url)
         data = response.json()
 
-        if data["rows"][0]["elements"][0]["status"] == "ZERO_RESULTS":
+        # Log the API response for debugging
+        logger.debug(f"DistanceMatrix API response: {data}")
+
+        if data.get("status") != "OK":
+            logger.error(
+                f"Error from DistanceMatrix API: {data.get('error_message', 'Unknown error')}"
+            )
             return None
 
-        distance = data["rows"][0]["elements"][0]["distance"]["value"] / 1000
+        if "rows" not in data or not data["rows"]:
+            logger.error("No rows found in DistanceMatrix API response")
+            return None
+
+        if "elements" not in data["rows"][0] or not data["rows"][0]["elements"]:
+            logger.error("No elements found in DistanceMatrix API response rows")
+            return None
+
+        element = data["rows"][0]["elements"][0]
+        if element.get("status") != "OK":
+            logger.error(f"DistanceMatrix API element error: {element.get('status')}")
+            return None
+
+        distance = element["distance"]["value"] / 1000
         return distance
     except Exception as e:
-        print(f"Error calculating distance: {e}")
+        logger.error(f"Error calculating distance: {e}")
         return None
 
 
@@ -101,16 +160,22 @@ def get_food_recommendations(
                     "estimatePrice": row["estimatePrice"],
                     "lat": restaurant_lat,
                     "lon": restaurant_lon,
-                    "distance": f"{distance:.2f} | {method}",
+                    "distance": distance,
+                    "method": method,
                 }
                 recommended_restaurants.append(restaurant_info)
 
         recommended_restaurants = sorted(
             recommended_restaurants, key=lambda x: x["distance"]
         )[:k]
+
+        for restaurant in recommended_restaurants:
+            restaurant["distance"] = (
+                f"{restaurant['distance']:.2f} km | {restaurant['method']}"
+            )
         return recommended_restaurants
     except Exception as e:
-        print(f"Error in get_food_recommendations: {e}")
+        logger.error(f"Error in get_food_recommendations: {e}")
         return []
 
 
@@ -131,6 +196,13 @@ def search_restaurants_by_name(
                 distance = get_distance_with_distancematrix_ai(
                     latitude, longitude, restaurant_lat, restaurant_lon
                 )
+
+                method = "Distance Matrix" if distance is not None else "Haversine"
+                if distance is None:
+                    distance = haversine(
+                        latitude, longitude, restaurant_lat, restaurant_lon
+                    )
+
                 if distance is not None and distance <= max_distance:
                     results.append(
                         {
@@ -141,7 +213,7 @@ def search_restaurants_by_name(
                             "estimatePrice": row["estimatePrice"],
                             "latitude": restaurant_lat,
                             "longitude": restaurant_lon,
-                            "distance": distance,
+                            "distance": f"{distance:.2f} km | {method}",
                         }
                     )
         else:
@@ -258,43 +330,6 @@ def recommend_food():
 
     recommended_food = get_food_recommendations(latitude, longitude, restaurants_data)
     return jsonify({"listKuliner": recommended_food})
-
-
-# BONUS HAVERSINE FORMULA
-# Define Earth radius (in kilometers)
-EARTH_RADIUS = 6371
-
-
-def haversine(lat1, lon1, lat2, lon2):
-    """
-    Calculates the distance between two points on a sphere using the Haversine formula.
-
-    Args:
-        lat1: Latitude of the first point in degrees.
-        lon1: Longitude of the first point in degrees.
-        lat2: Latitude of the second point in degrees.
-        lon2: Longitude of the second point in degrees.
-
-    Returns:
-        The distance between the two points in kilometers.
-    """
-    # Convert latitudes and longitudes to radians
-    lat1_rad = math.radians(lat1)
-    lon1_rad = math.radians(lon1)
-    lat2_rad = math.radians(lat2)
-    lon2_rad = math.radians(lon2)
-
-    dlon = lon2_rad - lon1_rad
-    dlat = lat2_rad - lat1_rad
-
-    a = math.sin(dlat / 2) * math.sin(dlat / 2) + math.cos(lat1_rad) * math.cos(
-        lat2_rad
-    ) * math.sin(dlon / 2) * math.sin(dlon / 2)
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-    distance = EARTH_RADIUS * c
-
-    return distance
 
 
 if __name__ == "__main__":
