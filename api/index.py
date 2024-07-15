@@ -83,21 +83,15 @@ def get_food_recommendations(
             restaurant_lat = row["lat"]
             restaurant_lon = row["lon"]
 
-            start_time = time.time()
             distance = get_distance_with_distancematrix_ai(
                 latitude, longitude, restaurant_lat, restaurant_lon
             )
+            method = "Distance Matrix" if distance is not None else "Haversine"
 
-            # Check if the request took too long or failed
-            if (
-                distance is None or (time.time() - start_time) > 5
-            ):  # Adjust time limit as needed
+            if distance is None:
                 distance = haversine(
                     latitude, longitude, restaurant_lat, restaurant_lon
                 )
-                method = "Haversine"
-            else:
-                method = "Distance Matrix"
 
             if distance is not None and distance <= max_distance:
                 restaurant_info = {
@@ -108,7 +102,7 @@ def get_food_recommendations(
                     "estimatePrice": row["estimatePrice"],
                     "lat": restaurant_lat,
                     "lon": restaurant_lon,
-                    "distance": f"{distance} | {method}",
+                    "distance": f"{distance:.2f} | {method}",
                 }
                 recommended_restaurants.append(restaurant_info)
 
