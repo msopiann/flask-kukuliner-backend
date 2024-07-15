@@ -1,7 +1,7 @@
 {
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
   "functions": {
-    "path/to/dir/**/*": {
+    "api/index.py": {
       "maxDuration": 60
     }
   }
